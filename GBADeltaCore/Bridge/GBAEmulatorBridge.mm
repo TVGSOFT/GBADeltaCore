@@ -56,6 +56,10 @@ int  RGB_LOW_BITS_MASK;
 
 @property (assign, nonatomic, getter=isFrameReady) BOOL frameReady;
 
+// Whether CPUReset() has built the memory map for the current game. armExecute() dereferences that map
+// unconditionally, so running a frame after a failed load crashes (Crashlytics 69434e0e).
+@property (assign, nonatomic, getter=isGameLoaded) BOOL gameLoaded;
+
 @property (nonatomic) uint32_t activatedInputs;
 
 @property (strong, nonatomic, readonly) CMMotionManager *motionManager;
@@ -94,11 +98,13 @@ int  RGB_LOW_BITS_MASK;
 - (void)startWithGameURL:(NSURL *)URL
 {
     self.gameURL = URL;
+    self.gameLoaded = NO;
     
     NSData *data = [NSData dataWithContentsOfURL:URL];
     
-    if (!CPULoadRomData((const char *)data.bytes, (int)data.length))
+    if (data.length == 0 || data.length > ROM_SIZE || !CPULoadRomData((const char *)data.bytes, (int)data.length))
     {
+        NSLog(@"[GBADeltaCore] Failed to load ROM (%lu bytes): %@", (unsigned long)data.length, URL.lastPathComponent);
         return;
     }
         
@@ -117,11 +123,14 @@ int  RGB_LOW_BITS_MASK;
     
     GBASystem.emuReset();
     
+    self.gameLoaded = YES;
     emulating = 1;
 }
 
 - (void)stop
 {
+    self.gameLoaded = NO;
+    
     GBASystem.emuCleanUp();
     soundShutdown();
     
@@ -144,6 +153,11 @@ int  RGB_LOW_BITS_MASK;
 
 - (void)runFrameAndProcessVideo:(BOOL)processVideo
 {
+    if (![self isGameLoaded])
+    {
+        return;
+    }
+    
     self.frameReady = NO;
     
     while (![self isFrameReady])
@@ -323,11 +337,23 @@ int  RGB_LOW_BITS_MASK;
 
 - (void)saveGameSaveToURL:(NSURL *)URL
 {
+    // ROM/memory buffers are NULL when no game is loaded (Crashlytics 6626f25b).
+    if (![self isGameLoaded])
+    {
+        return;
+    }
+    
     GBASystem.emuWriteBattery(URL.fileSystemRepresentation);
 }
 
 - (void)loadGameSaveFromURL:(NSURL *)URL
 {
+    // ROM/memory buffers are NULL when no game is loaded (Crashlytics 6626f25b).
+    if (![self isGameLoaded])
+    {
+        return;
+    }
+    
     GBASystem.emuReadBattery(URL.fileSystemRepresentation);
 }
 
@@ -335,11 +361,23 @@ int  RGB_LOW_BITS_MASK;
 
 - (void)saveSaveStateToURL:(NSURL *)URL
 {
+    // ROM/memory buffers are NULL when no game is loaded (Crashlytics 6626f25b).
+    if (![self isGameLoaded])
+    {
+        return;
+    }
+    
     GBASystem.emuWriteState(URL.fileSystemRepresentation);
 }
 
 - (void)loadSaveStateFromURL:(NSURL *)URL
 {
+    // ROM/memory buffers are NULL when no game is loaded (Crashlytics 6626f25b).
+    if (![self isGameLoaded])
+    {
+        return;
+    }
+    
     GBASystem.emuReadState(URL.fileSystemRepresentation);
 }
 
