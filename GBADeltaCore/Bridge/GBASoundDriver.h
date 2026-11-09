@@ -8,7 +8,7 @@
 
 #include <stdio.h>
 
-#include "common/SoundDriver.h"
+#include "core/base/sound_driver.h"
 
 class GBASoundDriver : public SoundDriver
 {
@@ -16,9 +16,10 @@ public:
     GBASoundDriver();
     virtual ~GBASoundDriver();
     
-    virtual bool init(long sampleRate);
-    virtual void pause();
-    virtual void reset();
-    virtual void resume();
-    virtual void write(uint16_t *finalWave, int length);
+    bool init(long sampleRate) override;
+    void pause() override;
+    void reset() override;
+    void resume() override;
+    void write(uint16_t *finalWave, int length) override;
+    void setThrottle(unsigned short throttle) override;
 };

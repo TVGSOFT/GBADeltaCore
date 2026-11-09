@@ -42,3 +42,7 @@ void GBASoundDriver::reset()
 {
 }
 
+void GBASoundDriver::setThrottle(unsigned short throttle)
+{
+    // Delta paces emulation itself; the core's throttle is irrelevant here.
+}
