@@ -121,56 +121,65 @@ static void GBAUpdateSystemColorMap(void)
 
 - (void)startWithGameURL:(NSURL *)URL
 {
-    self.gameURL = URL;
-    self.gameLoaded = NO;
-    
-    // Upstream defaults skipSaveGameBattery to 1, but the 2018 core (and every save state Delta has written so far)
-    // embeds the battery save in the state. Keep that so existing states load with their saves intact.
-    coreOptions.skipSaveGameBattery = 0;
-    coreOptions.skipSaveGameCheats = 0;
-    
-    NSData *data = [NSData dataWithContentsOfURL:URL];
-    
-    if (data.length == 0 || data.length > SIZE_ROM * 4 || !CPULoadRomData((const char *)data.bytes, (int)data.length))
+    // The bridge is a process-wide singleton shared by every EmulatorCore, and each core only
+    // serializes its own calls. Lock here so a stop/start can never free or reallocate emulator
+    // memory while another thread is inside a frame or a save.
+    @synchronized (self)
     {
-        NSLog(@"[GBADeltaCore] Failed to load ROM (%lu bytes): %@", (unsigned long)data.length, URL.lastPathComponent);
-        return;
-    }
+        self.gameURL = URL;
+        self.gameLoaded = NO;
+    
+        // Upstream defaults skipSaveGameBattery to 1, but the 2018 core (and every save state Delta has written so far)
+        // embeds the battery save in the state. Keep that so existing states load with their saves intact.
+        coreOptions.skipSaveGameBattery = 0;
+        coreOptions.skipSaveGameCheats = 0;
+    
+        NSData *data = [NSData dataWithContentsOfURL:URL];
+    
+        if (data.length == 0 || data.length > SIZE_ROM * 4 || !CPULoadRomData((const char *)data.bytes, (int)data.length))
+        {
+            NSLog(@"[GBADeltaCore] Failed to load ROM (%lu bytes): %@", (unsigned long)data.length, URL.lastPathComponent);
+            return;
+        }
         
-    GBAUpdateSystemColorMap();
-    flashDetectSaveType((int)data.length);
+        GBAUpdateSystemColorMap();
+        flashDetectSaveType((int)data.length);
     
-    // Update per-game settings after flashDetectSaveType determines defaults.
-    [self updateGameSettings];
+        // Update per-game settings after flashDetectSaveType determines defaults.
+        [self updateGameSettings];
     
-    // Upstream (ec46bf83) answers every ROM read from the EEPROM state machine while eepromMask == 0,
-    // and eepromSetSize() is the only thing that sets the mask. Without this, EEPROM/AUTO games read
-    // zeros from ROM and never get past the first frame. Same workaround as the wx/sdl/libretro frontends.
-    eepromSetSize(SIZE_EEPROM_512);
+        // Upstream (ec46bf83) answers every ROM read from the EEPROM state machine while eepromMask == 0,
+        // and eepromSetSize() is the only thing that sets the mask. Without this, EEPROM/AUTO games read
+        // zeros from ROM and never get past the first frame. Same workaround as the wx/sdl/libretro frontends.
+        eepromSetSize(SIZE_EEPROM_512);
     
-    soundInit();
-    soundSetSampleRate(32768); // 44100 chirps
+        soundInit();
+        soundSetSampleRate(32768); // 44100 chirps
     
-    soundReset();
+        soundReset();
     
-    CPUInit(0, false);
+        CPUInit(0, false);
     
-    GBASystem.emuReset();
+        GBASystem.emuReset();
     
-    self.gameLoaded = YES;
-    emulating = 1;
+        self.gameLoaded = YES;
+        emulating = 1;
+    }
 }
 
 - (void)stop
 {
-    self.gameLoaded = NO;
+    @synchronized (self)
+    {
+        self.gameLoaded = NO;
     
-    GBASystem.emuCleanUp();
-    soundShutdown();
+        GBASystem.emuCleanUp();
+        soundShutdown();
     
-    emulating = 0;
+        emulating = 0;
     
-    [self deactivateGyroscope];
+        [self deactivateGyroscope];
+    }
 }
 
 - (void)pause
@@ -187,16 +196,19 @@ static void GBAUpdateSystemColorMap(void)
 
 - (void)runFrameAndProcessVideo:(BOOL)processVideo
 {
-    if (![self isGameLoaded])
+    @synchronized (self)
     {
-        return;
-    }
+        if (![self isGameLoaded])
+        {
+            return;
+        }
     
-    self.frameReady = NO;
+        self.frameReady = NO;
     
-    while (![self isFrameReady])
-    {
-        GBASystem.emuMain(GBASystem.emuCount);
+        while (![self isFrameReady])
+        {
+            GBASystem.emuMain(GBASystem.emuCount);
+        }
     }
 }
 
@@ -380,48 +392,60 @@ static void GBAUpdateSystemColorMap(void)
 
 - (void)saveGameSaveToURL:(NSURL *)URL
 {
-    // ROM/memory buffers are NULL when no game is loaded (Crashlytics 6626f25b).
-    if (![self isGameLoaded])
+    @synchronized (self)
     {
-        return;
-    }
+        // ROM/memory buffers are NULL when no game is loaded (Crashlytics 6626f25b).
+        if (![self isGameLoaded])
+        {
+            return;
+        }
     
-    GBASystem.emuWriteBattery(URL.fileSystemRepresentation);
+        GBASystem.emuWriteBattery(URL.fileSystemRepresentation);
+    }
 }
 
 - (void)loadGameSaveFromURL:(NSURL *)URL
 {
-    // ROM/memory buffers are NULL when no game is loaded (Crashlytics 6626f25b).
-    if (![self isGameLoaded])
+    @synchronized (self)
     {
-        return;
-    }
+        // ROM/memory buffers are NULL when no game is loaded (Crashlytics 6626f25b).
+        if (![self isGameLoaded])
+        {
+            return;
+        }
     
-    GBASystem.emuReadBattery(URL.fileSystemRepresentation);
+        GBASystem.emuReadBattery(URL.fileSystemRepresentation);
+    }
 }
 
 #pragma mark - Save States -
 
 - (void)saveSaveStateToURL:(NSURL *)URL
 {
-    // ROM/memory buffers are NULL when no game is loaded (Crashlytics 6626f25b).
-    if (![self isGameLoaded])
+    @synchronized (self)
     {
-        return;
-    }
+        // ROM/memory buffers are NULL when no game is loaded (Crashlytics 6626f25b).
+        if (![self isGameLoaded])
+        {
+            return;
+        }
     
-    GBASystem.emuWriteState(URL.fileSystemRepresentation);
+        GBASystem.emuWriteState(URL.fileSystemRepresentation);
+    }
 }
 
 - (void)loadSaveStateFromURL:(NSURL *)URL
 {
-    // ROM/memory buffers are NULL when no game is loaded (Crashlytics 6626f25b).
-    if (![self isGameLoaded])
+    @synchronized (self)
     {
-        return;
-    }
+        // ROM/memory buffers are NULL when no game is loaded (Crashlytics 6626f25b).
+        if (![self isGameLoaded])
+        {
+            return;
+        }
     
-    GBASystem.emuReadState(URL.fileSystemRepresentation);
+        GBASystem.emuReadState(URL.fileSystemRepresentation);
+    }
 }
 
 #pragma mark - Cheats -
